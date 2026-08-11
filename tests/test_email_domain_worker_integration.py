@@ -25,6 +25,7 @@ def test_managed_domains_reach_all_supported_provider_adapters():
             "cloudmail_password",
             "moemail_api_base",
             "moemail_api_key",
+            "gptmail2_base_url",
             "yyds_api_key",
             "yyds_jwt",
         )
@@ -33,6 +34,7 @@ def test_managed_domains_reach_all_supported_provider_adapters():
         register.cloudflare_provider.create_temp_address,
         register.cloudmail_provider.create_mailbox,
         register.moemail_provider.create_mailbox,
+        register.gptmail2_provider.create_mailbox,
         register.yyds_create_account,
     )
     observed = {}
@@ -49,6 +51,7 @@ def test_managed_domains_reach_all_supported_provider_adapters():
                 "cloudmail_password": "not-used-in-test",
                 "moemail_api_base": "https://moemail.example.com",
                 "moemail_api_key": "not-used-in-test",
+                "gptmail2_base_url": "https://gptmail.example.com",
                 "yyds_api_key": "not-used-in-test",
                 "yyds_jwt": "",
             }
@@ -71,14 +74,20 @@ def test_managed_domains_reach_all_supported_provider_adapters():
             observed["yyds"] = domain
             return {"address": f"{local_part}@{domain}", "token": "yyds-token"}
 
+        def fake_gptmail2(_get, _post, _base, **kwargs):
+            observed["gptmail2"] = kwargs["domain"]
+            return f"user@{kwargs['domain']}", "gptmail2-token"
+
         register.cloudflare_provider.create_temp_address = fake_cloudflare
         register.cloudmail_provider.create_mailbox = fake_cloudmail
         register.moemail_provider.create_mailbox = fake_moemail
+        register.gptmail2_provider.create_mailbox = fake_gptmail2
         register.yyds_create_account = fake_yyds
         domains = {
             "cloudflare": "cf-mail.example.com",
             "cloudmail": "cloudmail.example.com",
             "moemail": "moe-mail.example.com",
+            "gptmail2": "gptmail.example.com",
             "yyds": "yyds-mail.example.com",
         }
         try:
@@ -94,6 +103,7 @@ def test_managed_domains_reach_all_supported_provider_adapters():
                 register.cloudflare_provider.create_temp_address,
                 register.cloudmail_provider.create_mailbox,
                 register.moemail_provider.create_mailbox,
+                register.gptmail2_provider.create_mailbox,
                 register.yyds_create_account,
             ) = previous_functions
             email_domain_store.STATE_PATH, email_domain_store.LOCK_PATH = previous_paths

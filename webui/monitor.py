@@ -2145,6 +2145,7 @@ HTML = r"""<!DOCTYPE html>
                     <option value="cloudflare">Cloudflare</option>
                     <option value="cloudmail">CloudMail</option>
                     <option value="moemail">MoeMail</option>
+                    <option value="gptmail2">GPTMail2</option>
                     <option value="yyds">YYDS</option>
                   </select>
                 </div>
@@ -2741,7 +2742,7 @@ function renderEmailProviderFields(provider) {
     `<div class="field"><label for="mail-field-${esc(field.name)}">${esc(field.label)}</label>${emailProviderFieldControl(field)}</div>`
   ).join("") || '<div class="field"><label>服务配置</label><input disabled value="该服务商没有可编辑字段"/></div>';
   const domainProvider = document.getElementById("domain-provider");
-  if (domainProvider && ["cloudflare", "cloudmail", "moemail", "yyds"].includes(definition.id)) {
+  if (domainProvider && ["cloudflare", "cloudmail", "moemail", "gptmail2", "yyds"].includes(definition.id)) {
     domainProvider.value = definition.id;
     if (domainData) renderEmailDomainPool(domainData);
   }

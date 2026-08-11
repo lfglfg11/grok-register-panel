@@ -246,6 +246,20 @@ def check_email_api(provider: str, config: dict, http_get: Callable, http_post: 
                 detail += f"；域名 {domains[:80]}"
             return "邮箱API", True, detail
 
+        if provider == "gptmail2":
+            from email_providers import gptmail2 as gptmail2_provider
+
+            try:
+                base = gptmail2_provider.normalize_base(
+                    str(config.get("gptmail2_base_url") or "")
+                )
+            except ValueError as exc:
+                return "邮箱API", False, str(exc)
+            # This probe is deliberately cookie-free: the actual verification
+            # session is created lazily by the selected registration worker.
+            resp = http_get(f"{base}/zh/", timeout=12, proxies={})
+            return "邮箱API", resp.status_code < 400, f"GPTMail2 HTTP {resp.status_code}"
+
         return "邮箱API", True, f"提供商 {provider} 跳过深度探测"
     except Exception as exc:
         return "邮箱API", False, redact_log_line(str(exc))

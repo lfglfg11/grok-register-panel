@@ -35,6 +35,7 @@ import sso_to_auth_json as _s2cpa
 from email_providers import cloudflare as cloudflare_provider
 from email_providers import cloudmail as cloudmail_provider
 from email_providers import duckmail as duckmail_provider
+from email_providers import gptmail2 as gptmail2_provider
 from email_providers import mailnest as mailnest_provider
 from email_providers import moemail as moemail_provider
 from email_providers import yyds as yyds_provider
@@ -231,6 +232,8 @@ DEFAULT_CONFIG = {
     "moemail_api_key": "",
     "moemail_domain": "",
     "moemail_expiry_ms": moemail_provider.DEFAULT_EXPIRY_MS,
+    # GPTMail2：浏览器验证会话私有缓存，剩余一小时自动续签。
+    "gptmail2_base_url": gptmail2_provider.DEFAULT_BASE_URL,
     # 账号间注册间隔（秒），0=不等待。填一个整数=N秒固定等待，填区间"60-120"=随机等待
     "account_interval": "60-120",
 }
@@ -1214,6 +1217,7 @@ def http_get(url, **kwargs):
 
 
 def http_post(url, **kwargs):
+    allow_direct_fallback = bool(kwargs.pop("_allow_direct_fallback", True))
     if _url_needs_direct(url):
         rk = dict(kwargs)
         rk.pop("proxies", None)
@@ -1227,7 +1231,7 @@ def http_post(url, **kwargs):
         return requests.post(url, **rk)
     except Exception as exc:
         err = str(exc)
-        if any(x in err for x in ("Could not connect", "TLS connect error", "OPENSSL_internal", "7890")):
+        if allow_direct_fallback and any(x in err for x in ("Could not connect", "TLS connect error", "OPENSSL_internal", "7890")):
             rk = dict(kwargs)
             rk.pop("proxies", None)
             rk.setdefault("timeout", 20)
@@ -1555,6 +1559,42 @@ def get_moemail_expiry_ms():
     return value if value in allowed else moemail_provider.DEFAULT_EXPIRY_MS
 
 
+def get_gptmail2_base_url():
+    return gptmail2_provider.normalize_base(
+        str(os.environ.get("GPTMAIL2_BASE_URL") or config.get("gptmail2_base_url", "") or "")
+    )
+
+
+def gptmail2_get_email_and_token(domain=""):
+    return gptmail2_provider.create_mailbox(
+        http_get,
+        http_post,
+        get_gptmail2_base_url(),
+        proxy_url=get_thread_proxy(),
+        domain=str(domain or "").strip(),
+    )
+
+
+def gptmail2_get_oai_code(
+    inbox_token, email, timeout=180, poll_interval=3, log_callback=None,
+    cancel_callback=None, resend_callback=None,
+):
+    return gptmail2_provider.wait_for_code(
+        http_get,
+        get_gptmail2_base_url(),
+        email,
+        inbox_token,
+        proxy_url=get_thread_proxy(),
+        timeout=timeout,
+        poll_interval=poll_interval,
+        raise_if_cancelled=raise_if_cancelled,
+        sleep_with_cancel=sleep_with_cancel,
+        log_callback=log_callback,
+        cancel_callback=cancel_callback,
+        resend_callback=resend_callback,
+    )
+
+
 def moemail_get_email_and_token(domain=""):
     # MoeMail owns its domain list. Do not reuse defaultDomains from another provider.
     return moemail_provider.create_mailbox(
@@ -1685,6 +1725,8 @@ def get_email_and_token(api_key=None):
         return cloudmail_get_email_and_token(domain=managed_domain)
     if provider == "moemail":
         return moemail_get_email_and_token(domain=managed_domain)
+    if provider == "gptmail2":
+        return gptmail2_get_email_and_token(domain=managed_domain)
     if provider == "cloudflare":
         api_base = get_cloudflare_api_base()
         if not api_base:
@@ -1763,6 +1805,12 @@ def get_oai_code(
             poll_interval=poll_interval,
             log_callback=log_callback,
             cancel_callback=cancel_callback,
+            resend_callback=resend_callback,
+        )
+    if provider == "gptmail2":
+        return gptmail2_get_oai_code(
+            dev_token, email, timeout=timeout, poll_interval=poll_interval,
+            log_callback=log_callback, cancel_callback=cancel_callback,
             resend_callback=resend_callback,
         )
     if provider == "cloudflare":
@@ -2486,7 +2534,7 @@ class GrokRegisterGUI:
         self.email_provider_combo = tk_option_menu(
             config_frame,
             self.email_provider_var,
-            ["duckmail", "yyds", "cloudflare", "mailnest", "cloudmail", "moemail"],
+            ["duckmail", "yyds", "cloudflare", "mailnest", "cloudmail", "moemail", "gptmail2"],
             width=12,
         )
         add_field(self.email_provider_combo, 0, 1, sticky=tk.W)
@@ -2744,6 +2792,18 @@ class GrokRegisterGUI:
             ),
         ]
 
+        # GPTMail2 only needs its public site URL. Browser verification cookies
+        # are generated on demand and never shown or written to config.json.
+        self.gptmail2_base_url_var = tk.StringVar(
+            value=str(config.get("gptmail2_base_url", gptmail2_provider.DEFAULT_BASE_URL) or gptmail2_provider.DEFAULT_BASE_URL)
+        )
+        self._gptmail2_widgets = [
+            p_label(0, 0, "站点 URL:"),
+            p_field(tk_entry(self.provider_frame, textvariable=self.gptmail2_base_url_var, width=52), 0, 1, columnspan=3),
+            p_label(1, 0, "说明:"),
+            p_field(tk_label(self.provider_frame, text="首次使用和剩余 1 小时时自动用 Camoufox 续签；平时仅 HTTP 收信", bg=UI_PANEL_BG), 1, 1, columnspan=3, sticky=tk.W),
+        ]
+
         self._provider_widget_groups = {
             "duckmail": self._duckmail_widgets,
             "cloudflare": self._cloudflare_widgets,
@@ -2751,6 +2811,7 @@ class GrokRegisterGUI:
             "mailnest": self._mailnest_widgets,
             "cloudmail": self._cloudmail_widgets,
             "moemail": self._moemail_widgets,
+            "gptmail2": self._gptmail2_widgets,
         }
 
         add_label(3, 0, "并发数（可选）:")
@@ -2927,6 +2988,7 @@ class GrokRegisterGUI:
             "mailnest": "MailNest 配置",
             "cloudmail": "CloudMail 配置",
             "moemail": "MoeMail 配置",
+            "gptmail2": "GPTMail2 配置",
         }
         self.provider_frame.configure(text=titles.get(provider, "邮箱服务商配置"))
         for widgets in self._provider_widget_groups.values():
@@ -3022,6 +3084,7 @@ class GrokRegisterGUI:
                 self.moemail_expiry_ms_var.get().strip()
                 or moemail_provider.DEFAULT_EXPIRY_MS
             )
+            config["gptmail2_base_url"] = self.gptmail2_base_url_var.get().strip()
             config["cpa_auto_add"] = bool(self.cpa_auto_add_var.get())
             _mode_text = str(self.cpa_token_mode_var.get()).strip()
             if "协议" in _mode_text:
@@ -3131,6 +3194,7 @@ class GrokRegisterGUI:
         config["moemail_api_base"] = self.moemail_api_base_var.get().strip()
         config["moemail_api_key"] = self.moemail_api_key_var.get().strip()
         config["moemail_domain"] = self.moemail_domain_var.get().strip().lstrip("@")
+        config["gptmail2_base_url"] = self.gptmail2_base_url_var.get().strip()
         try:
             config["moemail_expiry_ms"] = int(
                 self.moemail_expiry_ms_var.get().strip()
@@ -3174,6 +3238,12 @@ class GrokRegisterGUI:
                 missing.append("MoeMail API Key")
             if missing:
                 self.log(f"[!] MoeMail 模式缺少配置: {', '.join(missing)}")
+                return
+        if config["email_provider"] == "gptmail2":
+            try:
+                get_gptmail2_base_url()
+            except ValueError as exc:
+                self.log(f"[!] GPTMail2 配置无效: {exc}")
                 return
         if config["email_provider"] == "cloudmail":
             missing = []

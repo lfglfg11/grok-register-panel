@@ -26,6 +26,7 @@ PROVIDER_LABELS = {
     "mailnest": "MailNest",
     "cloudmail": "CloudMail",
     "moemail": "MoeMail",
+    "gptmail2": "GPTMail2",
 }
 SUPPORTED_PROVIDERS = tuple(PROVIDER_LABELS)
 
@@ -164,6 +165,12 @@ FIELD_DEFINITIONS = {
             {"value": 0, "label": "永久"},
         ],
     },
+    "gptmail2_base_url": {
+        "label": "站点 URL",
+        "type": "url",
+        "default": "https://mail.chatgpt.org.uk",
+        "placeholder": "https://mail.chatgpt.org.uk",
+    },
 }
 
 PROVIDER_FIELDS = {
@@ -194,6 +201,7 @@ PROVIDER_FIELDS = {
         "moemail_domain",
         "moemail_expiry_ms",
     ),
+    "gptmail2": ("gptmail2_base_url",),
 }
 
 SECRET_FIELDS = {
@@ -355,6 +363,8 @@ def _is_configured(provider: str, values: dict) -> bool:
         )
     if provider == "moemail":
         return bool(values.get("moemail_api_base") and values.get("moemail_api_key"))
+    if provider == "gptmail2":
+        return bool(values.get("gptmail2_base_url"))
     return False
 
 

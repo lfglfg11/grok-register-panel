@@ -126,7 +126,7 @@ cp config.example.json config.json
 
 | 字段 | 说明 |
 |------|------|
-| `email_provider` | `cloudflare` / `duckmail` / `yyds` / `mailnest` / `cloudmail` / `moemail` |
+| `email_provider` | `cloudflare` / `duckmail` / `yyds` / `mailnest` / `cloudmail` / `moemail` / `gptmail2` |
 | `defaultDomains` | 临时邮域名（如二级 CF 域） |
 | `cloudflare_*` / `duckmail_*` 等 | 对应邮箱 API |
 | `cloudflare_randomize_subdomain` | 默认 `true`；为管理域名生成随机子域，要求泛域收信；不支持时设为 `false` |
@@ -134,6 +134,7 @@ cp config.example.json config.json
 | `moemail_api_key` | MoeMail OpenAPI 的 `X-API-Key` |
 | `moemail_domain` | 可选固定域名；留空时自动读取 `/api/config` 的可用域名 |
 | `moemail_expiry_ms` | `3600000` / `86400000` / `604800000` / `0`，分别为 1 小时、1 天、7 天、永久 |
+| `gptmail2_base_url` | GPTMail2 站点 URL；验证会话按代理出口不可逆摘要隔离缓存，剩余一小时自动通过 Camoufox 续签。正常建邮箱、收信不会常驻浏览器或 Xvfb。 |
 | `proxy` | 默认 HTTP 代理，如 `http://127.0.0.1:7890` |
 | `proxies.txt` | 可选的旧版多行代理文件；未配置面板代理池时继续兼容 |
 | `register_workers` | 并发浏览器数（建议先 2～3） |
@@ -168,6 +169,7 @@ cp config.example.json config.json
 | `PROXY_RISK_COOLDOWN_SECONDS` | `1800` | 注册风控后的长冷却秒数 |
 | `EMAIL_PROVIDER_CONFIG_FILE` | `./config.json` | 面板邮箱服务配置文件；保存时保持 `0600` |
 | `EMAIL_DOMAIN_POOL_STATE_FILE` | `./log/email_domain_pool.json` | 邮箱域名池状态与规则，文件权限 `0600` |
+| `GPTMAIL2_SESSION_FILE` | `./log/gptmail2_sessions.json` | GPTMail2 私有浏览器验证会话缓存，文件权限 `0600` |
 | `GROK_STATIC_ASSET_CACHE` | 面板任务为 `1`，CLI 为空 | 面板启动链默认启用；命令行直启可设为 `1`，显式设 `0` 可关闭 |
 | `GROK_STATIC_CACHE_DIR` | `./log/static-asset-cache` | 静态缓存目录，文件权限 `0700` |
 | `GROK_STATIC_CACHE_MAX_MB` | `1024` | 静态缓存上限（MB），最低 `32` |

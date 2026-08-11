@@ -54,9 +54,11 @@ def test_provider_schema_and_defaults():
             "mailnest",
             "cloudmail",
             "moemail",
+            "gptmail2",
         }
         assert providers["duckmail"]["configured"] is True
         assert providers["cloudmail"]["configured"] is False
+        assert providers["gptmail2"]["configured"] is True
         random_subdomain = next(
             field
             for field in providers["cloudflare"]["fields"]

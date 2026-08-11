@@ -6,4 +6,5 @@
 - mailnest: 迈巢 Outlook
 - cloudmail: maillab/cloud-mail
 - moemail: MoeMail OpenAPI
+- gptmail2: GPTMail2 browser-verified temporary mail
 """
