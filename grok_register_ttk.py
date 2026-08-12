@@ -865,6 +865,41 @@ def _normalize_sso_token(raw_token):
     return token
 
 
+def _append_sso_collection(raw_token, log_callback=None):
+    """Append one deduplicated raw SSO per line for downstream batch conversion.
+
+    Per-account files retain email/password/SSO.  This companion file is
+    intentionally SSO-only so it can be supplied directly to the conversion
+    utility without leaking unrelated account fields into a copied list.
+    """
+    sso = _normalize_sso_token(raw_token)
+    if not sso:
+        raise ValueError("sso 为空，无法写入集合")
+    try:
+        path = accounts_side_file("sso_all.txt")
+        with exclusive_file_lock(path + ".lock"):
+            duplicate = False
+            try:
+                duplicate = sso in {
+                    line.strip().removeprefix("sso=").strip()
+                    for line in Path(path).read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                }
+            except OSError:
+                pass
+            if not duplicate:
+                append_private_text(path, f"{sso}\n")
+        if log_callback:
+            log_callback(
+                f"[SSO] {'已存在' if duplicate else '已追加'}纯 SSO 集合 → {path}"
+            )
+        return path
+    except Exception as exc:
+        if log_callback:
+            log_callback(f"[SSO] 写入纯 SSO 集合失败: {exc}")
+        raise
+
+
 def _resolve_cpa_proxy():
     """CPA 换 token 用的代理：优先线程绑定 / config.proxy，其次环境变量，否则直连。"""
     proxy = get_thread_proxy() or str(config.get("proxy", "") or "").strip()
@@ -3483,6 +3518,7 @@ class GrokRegisterGUI:
                         password=profile.get("password", ""),
                     )
                     ensure_sso_oauth_eligible(sso, email=email, log_callback=wlog)
+                    _append_sso_collection(sso, log_callback=wlog)
                     if config.get("enable_nsfw", True):
                         wlog("[*] 6. 开启 NSFW（失败不阻塞入库）")
                         try:
@@ -3815,6 +3851,9 @@ def run_registration_cli(count):
                             sso,
                             email=email,
                             log_callback=lambda m: cli_log(f"[W{wid+1}] {m}"),
+                        )
+                        _append_sso_collection(
+                            sso, log_callback=lambda m: cli_log(f"[W{wid+1}] {m}")
                         )
                         if config.get("enable_nsfw", True):
                             enable_nsfw_for_token(
@@ -4186,6 +4225,7 @@ def run_registration_cli(count):
                     password=profile.get("password", ""),
                 )
                 ensure_sso_oauth_eligible(sso, email=email, log_callback=cli_log)
+                _append_sso_collection(sso, log_callback=cli_log)
                 if config.get("enable_nsfw", True):
                     cli_log("[*] 6. 开启 NSFW")
                     nsfw_ok, nsfw_msg = enable_nsfw_for_token(

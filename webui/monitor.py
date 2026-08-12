@@ -2229,7 +2229,7 @@ HTML = r"""<!DOCTYPE html>
     </div>
     <p style="margin:0 0 10px;color:var(--muted);font-size:13px;line-height:1.5">
       解码 CPA / Grok2API auth 中的 access_token，检查是否含 <code>bfs</code> claim（与 botFlagSource 独立）。
-      注册换 token 后会自动检测并写入 <code>accounts/sso_bfs_flagged.txt</code>。
+      每个有效注册 SSO 会追加到 <code>accounts/sso_all.txt</code>（仅 SSO）；BFS 命中另写 <code>accounts/sso_bfs_flagged.txt</code>。
     </p>
     <div class="chips" id="bfs-kpis"></div>
     <div class="button-group" style="margin-top:10px">

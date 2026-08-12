@@ -43,6 +43,22 @@ def test_account_gap_sleep_is_cancelable():
     assert time.monotonic() - started < 0.5
 
 
+def test_sso_collection_is_sso_only_deduplicated_and_private():
+    previous = grok_register_ttk.ACCOUNTS_DIR
+    try:
+        with tempfile.TemporaryDirectory() as temp:
+            grok_register_ttk.ACCOUNTS_DIR = str(Path(temp) / "accounts")
+            token = "sso-token-for-test-" + "a" * 48
+            path = Path(grok_register_ttk._append_sso_collection(token))
+            grok_register_ttk._append_sso_collection("sso=" + token)
+            assert path.name == "sso_all.txt"
+            assert path.read_text(encoding="utf-8") == token + "\n"
+            if sys.platform != "win32":
+                assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    finally:
+        grok_register_ttk.ACCOUNTS_DIR = previous
+
+
 class FakePsutilError(Exception):
     pass
 
@@ -121,5 +137,6 @@ if __name__ == "__main__":
     test_windows_profile_root_uses_local_app_data()
     test_proxy_ip_validation_is_strict()
     test_account_gap_sleep_is_cancelable()
+    test_sso_collection_is_sso_only_deduplicated_and_private()
     test_windows_process_tree_terminates_descendants()
     print("OK windows runtime")
