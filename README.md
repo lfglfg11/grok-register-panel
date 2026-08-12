@@ -366,7 +366,7 @@ xAI 部分 access_token 的 payload 会带 **`bfs` 字段**（常见值 `2`）�
 | 能力 | 说明 |
 |------|------|
 | 注册后自动检测 | SSO→OAuth 换 token 后解码 JWT；命中写入 `accounts/sso_bfs_flagged.txt`，CPA 记录带 `bfs` / `bfs_value` |
-| SSO 聚合输出 | 每个通过注册风控检查的 SSO 追加到 `accounts/sso_all.txt`（一行一个，仅 SSO，自动去重）；单账号文件仍保留邮箱、密码与 SSO |
+| SSO 聚合输出 | 每个任务在首次通过注册风控检查的 SSO 出现时创建 `accounts/SSO_only_YYYYMMDD_HHMMSS.txt`；随后同任务 SSO 逐行追加（仅 SSO，自动去重）。单账号文件仍保留邮箱、密码与 SSO |
 | 面板 | 「BFS 检测」卡片：扫描 `cpa_auth` / `grok2api_auth`，导出 `log/bfs_flagged.jsonl` |
 | CLI | `python scripts/check_bfs.py` 或 `python sso_to_auth_json.py --check-bfs-dir cpa_auth` |
 

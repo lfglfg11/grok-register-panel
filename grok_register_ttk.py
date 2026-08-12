@@ -116,6 +116,8 @@ MEMORY_CLEANUP_INTERVAL = 5
 
 _session_log_path = None
 _session_log_lock = threading.Lock()
+_sso_collection_path = None
+_sso_collection_lock = threading.Lock()
 
 
 def ensure_accounts_dir():
@@ -865,18 +867,33 @@ def _normalize_sso_token(raw_token):
     return token
 
 
+def _sso_collection_output_path(now=None):
+    """Return this process's timestamped SSO-only output path."""
+    global _sso_collection_path
+    with _sso_collection_lock:
+        if _sso_collection_path:
+            return _sso_collection_path
+        ensure_accounts_dir()
+        timestamp = (now or datetime.datetime.now()).strftime("%Y%m%d_%H%M%S")
+        _sso_collection_path = os.path.join(
+            ACCOUNTS_DIR, f"SSO_only_{timestamp}.txt"
+        )
+        return _sso_collection_path
+
+
 def _append_sso_collection(raw_token, log_callback=None):
-    """Append one deduplicated raw SSO per line for downstream batch conversion.
+    """Append one SSO to this task's timestamped SSO-only collection.
 
     Per-account files retain email/password/SSO.  This companion file is
     intentionally SSO-only so it can be supplied directly to the conversion
-    utility without leaking unrelated account fields into a copied list.
+    utility without leaking unrelated account fields into a copied list.  A
+    newly started task gets a new file on its first valid SSO.
     """
     sso = _normalize_sso_token(raw_token)
     if not sso:
         raise ValueError("sso 为空，无法写入集合")
     try:
-        path = accounts_side_file("sso_all.txt")
+        path = _sso_collection_output_path()
         with exclusive_file_lock(path + ".lock"):
             duplicate = False
             try:
@@ -891,7 +908,7 @@ def _append_sso_collection(raw_token, log_callback=None):
                 append_private_text(path, f"{sso}\n")
         if log_callback:
             log_callback(
-                f"[SSO] {'已存在' if duplicate else '已追加'}纯 SSO 集合 → {path}"
+                f"[SSO] {'已存在' if duplicate else '已追加'}本任务纯 SSO 集合 → {path}"
             )
         return path
     except Exception as exc:
