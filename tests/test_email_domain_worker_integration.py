@@ -35,6 +35,7 @@ def test_managed_domains_reach_all_supported_provider_adapters():
         register.cloudmail_provider.create_mailbox,
         register.moemail_provider.create_mailbox,
         register.gptmail2_provider.create_mailbox,
+        register.gptmail2_provider.sync_domain_pool,
         register.yyds_create_account,
     )
     observed = {}
@@ -78,10 +79,14 @@ def test_managed_domains_reach_all_supported_provider_adapters():
             observed["gptmail2"] = kwargs["domain"]
             return f"user@{kwargs['domain']}", "gptmail2-token"
 
+        def fake_gptmail2_sync(*_args, **_kwargs):
+            return {"synced": False, "reason": "test"}
+
         register.cloudflare_provider.create_temp_address = fake_cloudflare
         register.cloudmail_provider.create_mailbox = fake_cloudmail
         register.moemail_provider.create_mailbox = fake_moemail
         register.gptmail2_provider.create_mailbox = fake_gptmail2
+        register.gptmail2_provider.sync_domain_pool = fake_gptmail2_sync
         register.yyds_create_account = fake_yyds
         domains = {
             "cloudflare": "cf-mail.example.com",
@@ -104,6 +109,7 @@ def test_managed_domains_reach_all_supported_provider_adapters():
                 register.cloudmail_provider.create_mailbox,
                 register.moemail_provider.create_mailbox,
                 register.gptmail2_provider.create_mailbox,
+                register.gptmail2_provider.sync_domain_pool,
                 register.yyds_create_account,
             ) = previous_functions
             email_domain_store.STATE_PATH, email_domain_store.LOCK_PATH = previous_paths
