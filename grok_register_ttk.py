@@ -67,6 +67,7 @@ from webui.email_domain_store import (
     SUPPORTED_PROVIDERS as _MANAGED_EMAIL_DOMAIN_PROVIDERS,
     record_domain_result as _record_managed_email_domain_result,
     select_domain as _select_managed_email_domain,
+    import_domains as _import_managed_email_domains,
 )
 from webui.security_utils import redact_log_line as redact_sensitive_log_line
 from browser_session import (
@@ -1575,6 +1576,22 @@ def gptmail2_get_email_and_token(domain=""):
     )
 
 
+def sync_gptmail2_domain_pool():
+    """Populate the managed pool before selecting a GPTMail2 mailbox domain."""
+    result = gptmail2_provider.sync_domain_pool(
+        http_get,
+        _import_managed_email_domains,
+        get_gptmail2_base_url(),
+        proxy_url=get_thread_proxy(),
+    )
+    if result.get("synced"):
+        print(
+            "[GPTMail2] 域名池已同步: "
+            f"{result.get('domain_count', 0)} 个，新增 {result.get('imported_count', 0)} 个"
+        )
+    return result
+
+
 def gptmail2_get_oai_code(
     inbox_token, email, timeout=180, poll_interval=3, log_callback=None,
     cancel_callback=None, resend_callback=None,
@@ -1714,6 +1731,8 @@ def _record_email_domain_rejected(email: str, message: str = "") -> str:
 
 def get_email_and_token(api_key=None):
     provider = get_email_provider()
+    if provider == "gptmail2":
+        sync_gptmail2_domain_pool()
     managed_domain = _managed_domain_for_provider(provider)
     if provider == "yyds":
         return yyds_get_email_and_token(

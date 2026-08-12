@@ -75,7 +75,10 @@ def test_create_and_poll_use_http_after_cached_verification():
             assert kwargs["json"]["email"].endswith("@mail.example.test")
             return FakeResponse({"success": True, "auth": {"token": "inbox-token"}})
 
-        email, token = gptmail2.create_mailbox(http_get, http_post, "https://mail.example.test", path=path)
+        email, token = gptmail2.create_mailbox(
+            http_get, http_post, "https://mail.example.test", path=path,
+            domain="mail.example.test",
+        )
         code = gptmail2.wait_for_code(
             http_get, "https://mail.example.test", email, token, path=path,
             raise_if_cancelled=lambda callback: None,
@@ -83,10 +86,49 @@ def test_create_and_poll_use_http_after_cached_verification():
         )
         assert token == "inbox-token"
         assert code == "ABC-123"
-        assert [item[0] for item in calls] == ["GET", "POST", "GET"]
+        assert [item[0] for item in calls] == ["POST", "GET"]
+
+
+def test_domain_pool_sync_is_throttled_for_three_hours():
+    with tempfile.TemporaryDirectory() as temp:
+        current = time.time()
+        session_path = Path(temp) / "sessions.json"
+        sync_path = Path(temp) / "sync.json"
+        gptmail2.ensure_session(
+            "https://mail.example.test", path=session_path,
+            refresh=lambda _base, _proxy: {"v": "not-a-jwt", "sid": "sid"}, now=current,
+        )
+        imports = []
+
+        def http_get(_url, **_kwargs):
+            return FakeResponse({"success": True, "data": {"domains": [
+                {"domain_name": "a.example.test", "is_active": 1},
+                {"domain_name": "b.example.test", "is_active": 1},
+            ]}})
+
+        def import_domains(domains, provider, **kwargs):
+            imports.append((domains, provider, kwargs))
+            return {"ok": True, "imported_count": len(domains), "duplicate_count": 0}
+
+        first = gptmail2.sync_domain_pool(
+            http_get, import_domains, "https://mail.example.test", session_path=session_path,
+            state_path=sync_path, now=current,
+        )
+        second = gptmail2.sync_domain_pool(
+            http_get, import_domains, "https://mail.example.test", session_path=session_path,
+            state_path=sync_path, now=current + 1,
+        )
+        third = gptmail2.sync_domain_pool(
+            http_get, import_domains, "https://mail.example.test", session_path=session_path,
+            state_path=sync_path, now=current + gptmail2.DOMAIN_SYNC_INTERVAL_SECONDS,
+        )
+        assert first["synced"] is True and second["synced"] is False and third["synced"] is True
+        assert len(imports) == 2
+        assert imports[0][1] == "gptmail2" and imports[0][2]["source"] == "gptmail2-auto"
 
 
 if __name__ == "__main__":
     test_session_is_cached_per_proxy_and_refreshes_one_hour_early()
     test_create_and_poll_use_http_after_cached_verification()
+    test_domain_pool_sync_is_throttled_for_three_hours()
     print("OK gptmail2")

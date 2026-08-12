@@ -13,7 +13,7 @@
   "cloudflare_path_accounts": "/api/new_address",
   "cloudflare_path_token": "/api/token",
   "cloudflare_path_messages": "/api/mails",
-  "proxy": "http://127.0.0.1:7890",
+  "proxy": "",
   "enable_nsfw": false,
   "debug_mode": false,
   "close_browser_on_stop": false,

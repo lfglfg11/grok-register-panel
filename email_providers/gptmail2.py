@@ -26,8 +26,10 @@ from secure_files import atomic_write_json, exclusive_file_lock
 
 DEFAULT_BASE_URL = "https://mail.chatgpt.org.uk"
 DEFAULT_SESSION_FILE = Path(__file__).resolve().parents[1] / "log" / "gptmail2_sessions.json"
+DEFAULT_DOMAIN_SYNC_FILE = Path(__file__).resolve().parents[1] / "log" / "gptmail2_domain_sync.json"
 REFRESH_BEFORE_SECONDS = 60 * 60
 FALLBACK_TTL_SECONDS = 24 * 60 * 60
+DOMAIN_SYNC_INTERVAL_SECONDS = 3 * 60 * 60
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36 Edg/150.0.0.0"
@@ -54,6 +56,11 @@ def normalize_base(base_url: str = "") -> str:
 def session_file(path: str | os.PathLike[str] | None = None) -> Path:
     configured = path or os.environ.get("GPTMAIL2_SESSION_FILE")
     return Path(configured).expanduser() if configured else DEFAULT_SESSION_FILE
+
+
+def domain_sync_file(path: str | os.PathLike[str] | None = None) -> Path:
+    configured = path or os.environ.get("GPTMAIL2_DOMAIN_SYNC_FILE")
+    return Path(configured).expanduser() if configured else DEFAULT_DOMAIN_SYNC_FILE
 
 
 def _proxy_key(proxy_url: str) -> str:
@@ -216,6 +223,85 @@ def _pick_local_part() -> str:
     return f"{random.choice(names)}{random.randint(100, 999)}"
 
 
+def list_domains(
+    http_get: HttpGet,
+    base_url: str = "",
+    *,
+    proxy_url: str = "",
+    path: str | os.PathLike[str] | None = None,
+) -> list[str]:
+    """Read all active public domains using a valid cached verification session."""
+    base = normalize_base(base_url)
+    session = ensure_session(base, proxy_url=proxy_url, path=path)
+    payload = _json(
+        http_get(
+            f"{base}/api/domains/public", headers=_headers(base, session), timeout=20,
+            _allow_direct_fallback=False,
+        ),
+        "读取域名",
+    )
+    seen = set()
+    domains = []
+    for item in ((payload.get("data") or {}).get("domains") or []):
+        if not isinstance(item, dict) or int(item.get("is_active") or 0) != 1:
+            continue
+        domain = str(item.get("domain_name") or "").strip().lower().lstrip("@")
+        if domain and domain not in seen:
+            seen.add(domain)
+            domains.append(domain)
+    if not domains:
+        raise RuntimeError("GPTMail2 没有可用的公开收信域名")
+    return domains
+
+
+def sync_domain_pool(
+    http_get: HttpGet,
+    import_domains: Callable[..., dict],
+    base_url: str = "",
+    *,
+    proxy_url: str = "",
+    session_path: str | os.PathLike[str] | None = None,
+    state_path: str | os.PathLike[str] | None = None,
+    force: bool = False,
+    now: Optional[float] = None,
+) -> dict:
+    """Import active GPTMail2 domains once at task start and every three hours."""
+    current = time.time() if now is None else float(now)
+    cache_path = domain_sync_file(state_path)
+    cache_key = hashlib.sha256(
+        f"{normalize_base(base_url)}:{_proxy_key(proxy_url)}".encode("utf-8")
+    ).hexdigest()[:24]
+    with exclusive_file_lock(cache_path.with_suffix(cache_path.suffix + ".lock")):
+        state = _read_state(cache_path)
+        entry = state["sessions"].get(cache_key) or {}
+        try:
+            due = current >= float(entry.get("next_sync_at") or 0)
+        except (TypeError, ValueError):
+            due = True
+        if not force and not due:
+            return {"synced": False, "reason": "fresh", "next_sync_at": entry.get("next_sync_at")}
+        domains = list_domains(
+            http_get, base_url, proxy_url=proxy_url, path=session_path
+        )
+        result = import_domains(domains, "gptmail2", source="gptmail2-auto")
+        if not result.get("ok"):
+            raise RuntimeError(str(result.get("error") or "GPTMail2 域名池同步失败"))
+        next_sync_at = int(current + DOMAIN_SYNC_INTERVAL_SECONDS)
+        state["sessions"][cache_key] = {
+            "next_sync_at": next_sync_at,
+            "last_domain_count": len(domains),
+            "updated_at": int(current),
+        }
+        atomic_write_json(cache_path, state)
+        return {
+            "synced": True,
+            "domain_count": len(domains),
+            "imported_count": int(result.get("imported_count") or 0),
+            "duplicate_count": int(result.get("duplicate_count") or 0),
+            "next_sync_at": next_sync_at,
+        }
+
+
 def create_mailbox(
     http_get: HttpGet,
     http_post: HttpPost,
@@ -227,26 +313,13 @@ def create_mailbox(
 ) -> tuple[str, str]:
     base = normalize_base(base_url)
     session = ensure_session(base, proxy_url=proxy_url, path=path)
-    domains_payload = _json(
-        http_get(
-            f"{base}/api/domains/public", headers=_headers(base, session), timeout=20,
-            _allow_direct_fallback=False,
-        ),
-        "读取域名",
-    )
-    domains = [
-        str(item.get("domain_name") or "").strip().lstrip("@")
-        for item in ((domains_payload.get("data") or {}).get("domains") or [])
-        if isinstance(item, dict) and int(item.get("is_active") or 0) == 1
-    ]
-    if not domains:
-        raise RuntimeError("GPTMail2 没有可用的公开收信域名")
     requested = str(domain or "").strip().lstrip("@")
     if requested:
-        if requested not in domains:
-            raise RuntimeError("GPTMail2 指定域名不在当前公开可用域名中")
         selected = requested
     else:
+        # Legacy/no-pool fallback only. Normal registration selects a managed
+        # domain after sync_domain_pool(), so it never downloads the list here.
+        domains = list_domains(http_get, base, proxy_url=proxy_url, path=path)
         selected = random.choice(domains)
     email = f"{_pick_local_part()}@{selected}"
     response = http_post(
