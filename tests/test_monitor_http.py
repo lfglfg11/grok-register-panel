@@ -157,6 +157,18 @@ def test_panel_registration_env_enables_guarded_cache():
             os.environ["GROK_STATIC_CACHE_DIR"] = previous_dir
 
 
+def test_add_count_supports_large_targets_and_clamps_at_fifty_thousand():
+    previous = monitor.CONTROL_FILE
+    with tempfile.TemporaryDirectory() as temp:
+        monitor.CONTROL_FILE = Path(temp) / "monitor_control.json"
+        try:
+            assert monitor.save_control({"add_count": 1_000})["add_count"] == 1_000
+            assert monitor.save_control({"add_count": 50_000})["add_count"] == 50_000
+            assert monitor.save_control({"add_count": 99_999})["add_count"] == 50_000
+        finally:
+            monitor.CONTROL_FILE = previous
+
+
 def test_proxy_api_auth_mutations_and_redaction():
     token = "test-proxy-token-123456"
     secret = "proxy-secret-value-99"
@@ -498,6 +510,7 @@ if __name__ == "__main__":
     test_process_discovery_aggregates_explicit_release_roots()
     test_monitor_http_auth_and_headers()
     test_panel_registration_env_enables_guarded_cache()
+    test_add_count_supports_large_targets_and_clamps_at_fifty_thousand()
     test_proxy_api_auth_mutations_and_redaction()
     test_email_domain_api_auth_and_mutations()
     test_email_provider_api_auth_secret_masking_and_probe()

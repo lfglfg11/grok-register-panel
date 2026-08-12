@@ -203,6 +203,9 @@ def _write_json(path: Path, data: dict):
     atomic_write_json(path, data)
 
 
+MAX_ADD_COUNT = 50_000
+
+
 def load_control() -> dict:
     with CONTROL_LOCK:
         c = _read_json(CONTROL_FILE, {})
@@ -240,7 +243,9 @@ def save_control(updates: dict) -> dict:
         except Exception:
             c["batch_count"] = 40
         try:
-            c["add_count"] = max(1, min(500, int(c.get("add_count", 40))))
+            c["add_count"] = max(
+                1, min(MAX_ADD_COUNT, int(c.get("add_count", 40)))
+            )
         except Exception:
             c["add_count"] = 40
         c["mode"] = c.get("mode") if c.get("mode") in ("orch", "batch") else "orch"
@@ -1907,7 +1912,7 @@ HTML = r"""<!DOCTYPE html>
         <input type="number" id="batch_count" min="1" max="200" value="40"/>
       </div>
       <div class="field"><label for="add_count">追加目标</label>
-        <input type="number" id="add_count" min="1" max="500" value="40" title="每次启动从当前 CPA 再注册 N 个"/>
+        <input type="number" id="add_count" min="1" max="50000" value="40" title="每次启动从当前 CPA 再注册 N 个"/>
       </div>
       <div class="field"><label for="risk_pause">风控阈值</label>
         <input type="number" id="risk_pause" min="1" max="50" value="10"/>
