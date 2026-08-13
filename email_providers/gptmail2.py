@@ -185,7 +185,7 @@ def ensure_session(
 
         if refresh is not None:
             created = refresh(base, proxy_url)
-        elif sys.platform.startswith("linux") and not os.environ.get("DISPLAY"):
+        elif sys.platform.startswith("linux"):
             _refresh_with_xvfb(base, proxy_url, cache_path)
             state = _read_state(cache_path)
             created = state["sessions"].get(cache_key) or {}
