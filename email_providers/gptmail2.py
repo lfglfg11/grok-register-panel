@@ -16,6 +16,7 @@ import re
 import subprocess
 import sys
 import time
+from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Any, Callable, Optional
 from urllib.parse import urlparse
@@ -206,6 +207,78 @@ def ensure_session(
         return {"v": verified, "sid": str(created.get("sid") or "")}
 
 
+INBOX_ACCESS_PREFIX = "gptmail2:v1:"
+
+
+def _pack_inbox_access(token: str, sid: str) -> str:
+    if not sid:
+        return token
+    payload = json.dumps({"token": token, "sid": sid}, separators=(",", ":")).encode("utf-8")
+    return INBOX_ACCESS_PREFIX + base64.urlsafe_b64encode(payload).decode("ascii")
+
+
+def _unpack_inbox_access(value: str) -> tuple[str, str]:
+    raw = str(value or "").strip()
+    if not raw.startswith(INBOX_ACCESS_PREFIX):
+        return raw, ""
+    try:
+        encoded = raw[len(INBOX_ACCESS_PREFIX):]
+        payload = json.loads(base64.urlsafe_b64decode(encoded).decode("utf-8"))
+        token = str(payload.get("token") or "").strip()
+        sid = str(payload.get("sid") or "").strip()
+        if token and sid:
+            return token, sid
+    except Exception:
+        pass
+    raise RuntimeError("GPTMail2 收件箱凭据无效")
+
+def _response_cookie(response: Any, name: str) -> str:
+    cookies = getattr(response, "cookies", None)
+    if cookies is not None:
+        try:
+            value = cookies.get(name)
+            if value:
+                return str(value).strip()
+        except Exception:
+            pass
+    headers = getattr(response, "headers", None)
+    if headers is None:
+        return ""
+    try:
+        raw = headers.get("set-cookie") or headers.get("Set-Cookie") or ""
+    except Exception:
+        return ""
+    if not raw:
+        return ""
+    parsed = SimpleCookie()
+    try:
+        parsed.load(str(raw))
+        morsel = parsed.get(name)
+        return str(morsel.value).strip() if morsel else ""
+    except Exception:
+        return ""
+
+
+def _store_session_sid(
+    proxy_url: str,
+    path: str | os.PathLike[str] | None,
+    verified: str,
+    sid: str,
+) -> None:
+    cache_path = session_file(path)
+    cache_key = _proxy_key(proxy_url)
+    with exclusive_file_lock(cache_path.with_suffix(cache_path.suffix + ".lock")):
+        state = _read_state(cache_path)
+        existing = state["sessions"].get(cache_key)
+        if not isinstance(existing, dict) or str(existing.get("v") or "") != verified:
+            return
+        updated = dict(existing)
+        updated["sid"] = sid
+        updated["updated_at"] = int(time.time())
+        state["sessions"][cache_key] = updated
+        atomic_write_json(cache_path, state)
+
+
 def _json(resp: Any, action: str) -> dict:
     status = int(getattr(resp, "status_code", 0) or 0)
     try:
@@ -322,29 +395,39 @@ def create_mailbox(
         domains = list_domains(http_get, base, proxy_url=proxy_url, path=path)
         selected = random.choice(domains)
     email = f"{_pick_local_part()}@{selected}"
-    response = http_post(
-        f"{base}/api/inbox-token",
-        json={"email": email},
-        headers={**_headers(base, session, referer=f"{base}/zh/{email}"), "Content-Type": "application/json"},
-        timeout=20,
-        _allow_direct_fallback=False,
-    )
+
+    def request_token(current_session: dict) -> tuple[Any, dict]:
+        response = http_post(
+            f"{base}/api/inbox-token",
+            json={"email": email},
+            headers={
+                **_headers(base, current_session, referer=f"{base}/zh/{email}"),
+                "Content-Type": "application/json",
+            },
+            timeout=20,
+            _allow_direct_fallback=False,
+        )
+        return response, _json(response, "创建收件箱")
+
     try:
-        payload = _json(response, "创建收件箱")
+        response, payload = request_token(session)
     except RuntimeError as exc:
         if "browser_verification" not in str(exc):
             raise
         session = ensure_session(base, proxy_url=proxy_url, path=path, force=True)
-        response = http_post(
-            f"{base}/api/inbox-token", json={"email": email},
-            headers={**_headers(base, session, referer=f"{base}/zh/{email}"), "Content-Type": "application/json"}, timeout=20,
-            _allow_direct_fallback=False,
-        )
-        payload = _json(response, "创建收件箱")
+        response, payload = request_token(session)
+
+    response_sid = _response_cookie(response, "gm_sid")
+    if response_sid and response_sid != str(session.get("sid") or ""):
+        session = {"v": str(session["v"]), "sid": response_sid}
+        _store_session_sid(proxy_url, path, session["v"], response_sid)
+        # The first token is issued before the new gm_sid cookie is established.
+        # Request it once more with gm_sid, matching the provider's web client.
+        _response, payload = request_token(session)
     token = str(((payload.get("auth") or {}).get("token") or "")).strip()
     if not token:
         raise RuntimeError("GPTMail2 创建收件箱响应缺少 inbox token")
-    return email, token
+    return email, _pack_inbox_access(token, str(session.get("sid") or ""))
 
 
 def wait_for_code(
@@ -364,6 +447,7 @@ def wait_for_code(
     resend_callback: Optional[Callable[[], None]] = None,
 ) -> str:
     base = normalize_base(base_url)
+    raw_inbox_token, mailbox_sid = _unpack_inbox_access(inbox_token)
     deadline = time.time() + max(1, int(timeout))
     next_resend_at = time.time() + 35
     while time.time() < deadline:
@@ -377,10 +461,12 @@ def wait_for_code(
             next_resend_at = time.time() + 35
         try:
             session = ensure_session(base, proxy_url=proxy_url, path=path)
+            if mailbox_sid:
+                session = {"v": str(session["v"]), "sid": mailbox_sid}
             response = http_get(
                 f"{base}/api/emails",
                 params={"email": email},
-                headers=_headers(base, session, inbox_token=inbox_token, referer=f"{base}/zh/{email}"),
+                headers=_headers(base, session, inbox_token=raw_inbox_token, referer=f"{base}/zh/{email}"),
                 timeout=20,
                 _allow_direct_fallback=False,
             )

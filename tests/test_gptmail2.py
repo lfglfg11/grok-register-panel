@@ -13,9 +13,10 @@ from email_providers import gptmail2
 
 
 class FakeResponse:
-    def __init__(self, payload, status_code=200):
+    def __init__(self, payload, status_code=200, headers=None):
         self.payload = payload
         self.status_code = status_code
+        self.headers = headers or {}
 
     def json(self):
         return self.payload
@@ -84,10 +85,47 @@ def test_create_and_poll_use_http_after_cached_verification():
             raise_if_cancelled=lambda callback: None,
             sleep_with_cancel=lambda seconds, callback: None,
         )
-        assert token == "inbox-token"
+        raw_token, mailbox_sid = gptmail2._unpack_inbox_access(token)
+        assert raw_token == "inbox-token"
+        assert mailbox_sid == "sid"
         assert code == "ABC-123"
         assert [item[0] for item in calls] == ["POST", "GET"]
 
+
+def test_create_mailbox_bootstraps_gm_sid_and_reissues_token():
+    with tempfile.TemporaryDirectory() as temp:
+        path = Path(temp) / "sessions.json"
+        gptmail2.ensure_session(
+            "https://mail.example.test", path=path,
+            refresh=lambda _base, _proxy: {"v": "not-a-jwt", "sid": ""}, now=time.time(),
+        )
+        posts = []
+
+        def http_post(_url, **kwargs):
+            posts.append(kwargs)
+            if len(posts) == 1:
+                return FakeResponse(
+                    {"success": True, "auth": {"token": "pre-session-token"}},
+                    headers={"Set-Cookie": "gm_sid=session-cookie; Path=/; HttpOnly; Secure"},
+                )
+            return FakeResponse({"success": True, "auth": {"token": "session-token"}})
+
+        email, token = gptmail2.create_mailbox(
+            lambda *_args, **_kwargs: None,
+            http_post,
+            "https://mail.example.test",
+            path=path,
+            domain="mail.example.test",
+        )
+
+        assert email.endswith("@mail.example.test")
+        raw_token, mailbox_sid = gptmail2._unpack_inbox_access(token)
+        assert raw_token == "session-token"
+        assert mailbox_sid == "session-cookie"
+        assert len(posts) == 2
+        assert posts[0]["headers"]["Cookie"].endswith("gm_sid=")
+        assert "gm_sid=session-cookie" in posts[1]["headers"]["Cookie"]
+        assert gptmail2.ensure_session("https://mail.example.test", path=path)["sid"] == "session-cookie"
 
 def test_domain_pool_sync_is_throttled_for_three_hours():
     with tempfile.TemporaryDirectory() as temp:
@@ -130,5 +168,6 @@ def test_domain_pool_sync_is_throttled_for_three_hours():
 if __name__ == "__main__":
     test_session_is_cached_per_proxy_and_refreshes_one_hour_early()
     test_create_and_poll_use_http_after_cached_verification()
+    test_create_mailbox_bootstraps_gm_sid_and_reissues_token()
     test_domain_pool_sync_is_throttled_for_three_hours()
     print("OK gptmail2")
