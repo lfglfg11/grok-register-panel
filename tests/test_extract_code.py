@@ -30,8 +30,24 @@ def test_mixed_real_codes():
     assert extract_verification_code("only max-100 in mail chrome", "") is None
 
 
+def test_numeric_dashed_code_requires_strong_context():
+    assert extract_verification_code(
+        "",
+        "SpaceXAI confirmation code: 489-404",
+    ) == "489-404"
+    assert extract_verification_code(
+        "Your confirmation code is 123-456",
+        "",
+    ) == "123-456"
+    assert extract_verification_code(
+        "width: 100-100; padding: 200-300",
+        "",
+    ) is None
+
+
 if __name__ == "__main__":
     test_reject_per100()
     test_subject_wins()
     test_mixed_real_codes()
+    test_numeric_dashed_code_requires_strong_context()
     print("OK extract_code")

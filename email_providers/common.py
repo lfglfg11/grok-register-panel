@@ -144,6 +144,18 @@ def extract_verification_code(text: str, subject: str = "") -> Optional[str]:
     subject = subject or ""
     text = text or ""
 
+    # xAI currently also sends numeric dashed codes such as ``123-456``.
+    # Keep these out of the generic candidate scan because HTML/CSS commonly
+    # contains lookalikes (for example ``width: 100-100``). Accept them only
+    # when the surrounding text explicitly identifies a verification code.
+    for source in (subject, text):
+        for pat in (
+            r"\b(?:SpaceXAI|xAI)\b[^\r\n]{0,48}?\b(?:confirmation|verification|security)\s+code\s*(?:is|:)?\s*(\d{3}-\d{3})\b",
+            r"\b(?:your\s+)?(?:confirmation|verification|security)\s+code\s*(?:is|:)?\s*(\d{3}-\d{3})\b",
+        ):
+            m = re.search(pat, source, re.IGNORECASE)
+            if m:
+                return _normalize_code(m.group(1))
     m = re.search(r"^([A-Za-z0-9]{3}-[A-Za-z0-9]{3})\s+xAI\b", subject, re.IGNORECASE)
     if m and _is_plausible_xai_code(m.group(1)):
         return _normalize_code(m.group(1))
