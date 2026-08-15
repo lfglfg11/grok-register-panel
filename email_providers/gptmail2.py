@@ -210,6 +210,11 @@ def ensure_session(
 INBOX_ACCESS_PREFIX = "gptmail2:v1:"
 
 
+def _short_fingerprint(value: object) -> str:
+    """Return a non-reversible identifier suitable for operational logs."""
+    return hashlib.sha256(str(value or "").encode("utf-8")).hexdigest()[:12]
+
+
 def _pack_inbox_access(token: str, sid: str) -> str:
     if not sid:
         return token
@@ -448,8 +453,21 @@ def wait_for_code(
 ) -> str:
     base = normalize_base(base_url)
     raw_inbox_token, mailbox_sid = _unpack_inbox_access(inbox_token)
+    email_fingerprint = _short_fingerprint(str(email or "").strip().lower())
+    token_fingerprint = _short_fingerprint(raw_inbox_token)
+    sid_fingerprint = _short_fingerprint(mailbox_sid)
+    if log_callback:
+        log_callback(
+            "[GPTMail2诊断] 开始轮询 "
+            f"email={email_fingerprint} "
+            f"token={token_fingerprint}/{len(raw_inbox_token)} "
+            f"sid={sid_fingerprint}/{len(mailbox_sid)} "
+            f"packed={'yes' if str(inbox_token or '').startswith(INBOX_ACCESS_PREFIX) else 'no'}"
+        )
     deadline = time.time() + max(1, int(timeout))
     next_resend_at = time.time() + 35
+    last_poll_state = None
+    poll_count = 0
     while time.time() < deadline:
         raise_if_cancelled(cancel_callback)
         if resend_callback and time.time() >= next_resend_at:
@@ -459,7 +477,9 @@ def wait_for_code(
                 if log_callback:
                     log_callback(f"[Debug] GPTMail2 触发重发验证码失败: {exc}")
             next_resend_at = time.time() + 35
+        response = None
         try:
+            poll_count += 1
             session = ensure_session(base, proxy_url=proxy_url, path=path)
             if mailbox_sid:
                 session = {"v": str(session["v"]), "sid": mailbox_sid}
@@ -470,8 +490,18 @@ def wait_for_code(
                 timeout=20,
                 _allow_direct_fallback=False,
             )
+            status = int(getattr(response, "status_code", 0) or 0)
             payload = _json(response, "读取邮件")
             messages = ((payload.get("data") or {}).get("emails") or [])
+            poll_state = ("ok", status, bool(payload.get("success", True)), len(messages))
+            if log_callback and poll_state != last_poll_state:
+                log_callback(
+                    "[GPTMail2诊断] 轮询状态 "
+                    f"email={email_fingerprint} token={token_fingerprint} "
+                    f"sid={sid_fingerprint} poll={poll_count} HTTP={status} "
+                    f"success={poll_state[2]} messages={len(messages)}"
+                )
+            last_poll_state = poll_state
             if log_callback:
                 log_callback(f"[Debug] GPTMail2 本轮邮件数量: {len(messages)}")
             for message in messages:
@@ -485,9 +515,25 @@ def wait_for_code(
                         log_callback("[*] GPTMail2 已提取到验证码")
                     return code
         except Exception as exc:
+            status = int(getattr(response, "status_code", 0) or 0)
+            poll_state = ("error", status, type(exc).__name__)
+            if log_callback and poll_state != last_poll_state:
+                log_callback(
+                    "[GPTMail2诊断] 轮询异常 "
+                    f"email={email_fingerprint} token={token_fingerprint} "
+                    f"sid={sid_fingerprint} poll={poll_count} HTTP={status} "
+                    f"error={type(exc).__name__}"
+                )
+            last_poll_state = poll_state
             if log_callback:
                 log_callback(f"[Debug] GPTMail2 拉取邮件失败: {exc}")
         sleep_with_cancel(poll_interval, cancel_callback)
+    if log_callback:
+        log_callback(
+            "[GPTMail2诊断] 轮询超时 "
+            f"email={email_fingerprint} token={token_fingerprint} "
+            f"sid={sid_fingerprint} polls={poll_count} last_state={last_poll_state!r}"
+        )
     raise RuntimeError(f"GPTMail2 在 {timeout}s 内未收到验证码邮件")
 
 

@@ -127,6 +127,48 @@ def test_create_mailbox_bootstraps_gm_sid_and_reissues_token():
         assert "gm_sid=session-cookie" in posts[1]["headers"]["Cookie"]
         assert gptmail2.ensure_session("https://mail.example.test", path=path)["sid"] == "session-cookie"
 
+
+def test_poll_diagnostics_are_redacted_and_only_emit_state_changes():
+    with tempfile.TemporaryDirectory() as temp:
+        path = Path(temp) / "sessions.json"
+        gptmail2.ensure_session(
+            "https://mail.example.test", path=path,
+            refresh=lambda _base, _proxy: {"v": "not-a-jwt", "sid": "mailbox-session-secret"},
+            now=time.time(),
+        )
+        email = "private-user@mail.example.test"
+        raw_token = "private-inbox-token"
+        packed = gptmail2._pack_inbox_access(raw_token, "mailbox-session-secret")
+        logs = []
+        polls = 0
+
+        def http_get(_url, **_kwargs):
+            nonlocal polls
+            polls += 1
+            messages = [] if polls < 3 else [{
+                "subject": "xAI verification",
+                "content": "Your verification code is ABC-123",
+            }]
+            return FakeResponse({"success": True, "data": {"emails": messages}})
+
+        code = gptmail2.wait_for_code(
+            http_get, "https://mail.example.test", email, packed, path=path,
+            raise_if_cancelled=lambda callback: None,
+            sleep_with_cancel=lambda seconds, callback: None,
+            log_callback=logs.append,
+        )
+
+        diagnostic = [line for line in logs if line.startswith("[GPTMail2诊断]")]
+        joined = "\n".join(diagnostic)
+        assert code == "ABC-123"
+        assert len(diagnostic) == 3
+        assert "messages=0" in diagnostic[1]
+        assert "messages=1" in diagnostic[2]
+        assert email not in joined
+        assert raw_token not in joined
+        assert "mailbox-session-secret" not in joined
+
+
 def test_domain_pool_sync_is_throttled_for_three_hours():
     with tempfile.TemporaryDirectory() as temp:
         current = time.time()
@@ -169,5 +211,6 @@ if __name__ == "__main__":
     test_session_is_cached_per_proxy_and_refreshes_one_hour_early()
     test_create_and_poll_use_http_after_cached_verification()
     test_create_mailbox_bootstraps_gm_sid_and_reissues_token()
+    test_poll_diagnostics_are_redacted_and_only_emit_state_changes()
     test_domain_pool_sync_is_throttled_for_three_hours()
     print("OK gptmail2")
